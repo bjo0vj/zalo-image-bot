@@ -4,19 +4,17 @@ const fs = require('fs');
 const app = express();
 
 const TARGET_DEFAULT = 10;
-const DATA_FILE = 'data.json';  // File lưu state (có thể bị mất trên Render nếu redeploy)
-
-const OA_TOKEN = process.env.ZALO_OA_TOKEN;  // Token từ env
+const DATA_FILE = 'data.json';  // File lưu state (có thể bị mất nếu redeploy)
+const OA_TOKEN = process.env.ZALO_OA_TOKEN;  // Token từ biến môi trường
 
 if (!OA_TOKEN) console.warn('⚠️ CHƯA CÓ ZALO_OA_TOKEN. Hãy đặt biến môi trường ZALO_OA_TOKEN trước khi deploy.');
-console.log('OA_TOKEN=', OA_TOKEN ? 'Đã set' : 'Chưa set');
+console.log('OA_TOKEN =', OA_TOKEN ? 'Đã set ✅' : 'Chưa set ❌');
 
-// Load hoặc init state
+// --- LOAD STATE ---
 let state = { targetCount: TARGET_DEFAULT, counting: false, countedUsers: [] };
 try {
   if (fs.existsSync(DATA_FILE)) {
     state = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    // Đảm bảo countedUsers luôn là array
     state.countedUsers = Array.isArray(state.countedUsers) ? state.countedUsers : [];
     console.log('Loaded state:', state);
   }
@@ -27,17 +25,16 @@ try {
 function saveState() {
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), 'utf8');
-    console.log('State saved successfully.');
+    console.log('✅ State đã được lưu.');
   } catch (e) {
-    console.error('Lỗi khi lưu state (có thể do file system Render):', e);
-    // Trên Render, file có thể không persistent – không crash, chỉ log
+    console.error('⚠️ Lỗi khi lưu state (có thể do file system Render):', e);
   }
 }
 
-// Helper gửi message
+// --- GỬI TIN NHẮN ---
 async function sendMessage(target, text, isConversation = true) {
   if (!OA_TOKEN) {
-    console.warn('⚠️ Không có OA_TOKEN, không gửi tin nhắn.');
+    console.warn('⚠️ Không có OA_TOKEN, bỏ qua gửi tin nhắn.');
     return;
   }
   const url = 'https://openapi.zalo.me/v2.0/oa/message';
@@ -45,21 +42,26 @@ async function sendMessage(target, text, isConversation = true) {
   const body = isConversation
     ? { recipient: { conversation_id: target }, message: { text } }
     : { recipient: { user_id: target }, message: { text } };
+
   try {
     await axios.post(url, body, { headers });
-    console.log('Tin nhắn gửi thành công.');
+    console.log(`📤 Đã gửi tin: "${text}"`);
   } catch (err) {
-    console.error('Gửi tin nhắn thất bại:', err.response?.data || err.message);
+    console.error('🚨 Gửi tin nhắn thất bại:', err.response?.data || err.message);
   }
 }
 
-// Express setup
+// --- EXPRESS SETUP ---
 app.use(express.json());
 
-// Webhook endpoint
-app.post('/webhook', async (req, res) => {
-  res.status(200).send('OK');  // Phản hồi ngay để tránh timeout
+// 🩺 HEALTH CHECK (cho Railway)
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
+// --- WEBHOOK XỬ LÝ ---
+app.post('/webhook', async (req, res) => {
+  res.status(200).send('OK'); // Trả lời ngay tránh timeout
   const { message } = req.body;
   if (!message) return;
 
@@ -68,7 +70,7 @@ app.post('/webhook', async (req, res) => {
   const sender = messageObj.from?.id || messageObj.sender?.id;
   const conversationId = messageObj.conversation?.id;
 
-  console.log('Received message:', { text, sender, conversationId });
+  console.log('📩 Nhận message:', { text, sender, conversationId });
 
   // === Xử lý lệnh text ===
   if (text) {
@@ -112,13 +114,13 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (text === '!status') {
-        const statusMsg = `Status: counting=${state.counting}, target=${state.targetCount}, current=${state.countedUsers.length}`;
+        const statusMsg = `📊 Trạng thái: counting=${state.counting}, target=${state.targetCount}, current=${state.countedUsers.length}`;
         if (conversationId) await sendMessage(conversationId, statusMsg, true);
         else if (sender) await sendMessage(sender, statusMsg, false);
         return;
       }
     } catch (e) {
-      console.error('Lỗi khi xử lý lệnh text:', e);
+      console.error('💥 Lỗi khi xử lý lệnh text:', e);
       return;
     }
   }
@@ -131,7 +133,7 @@ app.post('/webhook', async (req, res) => {
 
   let foundImage = false;
   for (const att of attachments) {
-    if (att.type === 'image' || att.type === 'photo') {
+    if (att.type === 'image' || att.type === 'photo' || att.url) {
       foundImage = true;
       break;
     }
@@ -141,12 +143,13 @@ app.post('/webhook', async (req, res) => {
   if (foundImage && !state.countedUsers.includes(sender)) {
     state.countedUsers.push(sender);
     saveState();
-    const say = `📸 Ghi nhận: +1 người gửi ảnh. Hiện: ${state.countedUsers.length}/${state.targetCount}`;
+    const say = `📸 Ghi nhận: +1 người gửi ảnh (${state.countedUsers.length}/${state.targetCount})`;
     if (conversationId) await sendMessage(conversationId, say, true);
     else await sendMessage(sender, say, false);
 
+    // Nếu đạt mục tiêu
     if (state.countedUsers.length >= state.targetCount) {
-      const notifyText = `🎉 ĐÃ ĐỦ: ${state.countedUsers.length}/${state.targetCount} người.`;
+      const notifyText = `🎉 ĐÃ ĐỦ: ${state.countedUsers.length}/${state.targetCount} người!`;
       if (conversationId) await sendMessage(conversationId, notifyText, true);
       else await sendMessage(sender, notifyText, false);
       state.counting = false;
@@ -155,5 +158,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// --- KHỞI ĐỘNG ---
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Bot chạy trên port ${port}`));
+app.listen(port, () => console.log(`🚀 Bot đang chạy trên port ${port}`));
