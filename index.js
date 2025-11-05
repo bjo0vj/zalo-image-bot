@@ -19,6 +19,8 @@ let state = { targetCount: TARGET_DEFAULT, counting: false, countedUsers: [] };
 try {
   if (fs.existsSync(DATA_FILE)) {
     state = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    // đảm bảo countedUsers luôn là array
+    state.countedUsers = Array.isArray(state.countedUsers) ? state.countedUsers : [];
     console.log('Loaded state:', state);
   }
 } catch (e) {
@@ -26,8 +28,11 @@ try {
 }
 
 function saveState() {
-  try { fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), 'utf8'); }
-  catch (e) { console.error('Lỗi khi lưu state:', e); }
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Lỗi khi lưu state:', e);
+  }
 }
 
 // Helper gửi message
@@ -38,8 +43,11 @@ async function sendMessage(target, text, isConversation = true) {
   const body = isConversation
     ? { recipient: { conversation_id: target }, message: { text } }
     : { recipient: { user_id: target }, message: { text } };
-  try { await axios.post(url, body, { headers }); }
-  catch (err) { console.error('Gửi tin nhắn thất bại:', err.response?.data || err.message); }
+  try {
+    await axios.post(url, body, { headers });
+  } catch (err) {
+    console.error('Gửi tin nhắn thất bại:', err.response?.data || err.message);
+  }
 }
 
 // Express setup
@@ -68,49 +76,53 @@ app.post('/webhook', async (req, res) => {
 
   // === Xử lý lệnh text ===
   if (text) {
-    if (text === '!menu') {
-      const menuText = [
-        '📜 *Menu lệnh*',
-        '!count -> Bắt đầu đếm người gửi ảnh.',
-        '!setsonguoi:<số> -> Đặt mục tiêu số người.',
-        '!status -> Xem trạng thái bot.'
-      ].join('\n');
-      if (conversationId) await sendMessage(conversationId, menuText, true);
-      else if (sender) await sendMessage(sender, menuText, false);
-      return;
-    }
-
-    if (text.startsWith('!setsonguoi:')) {
-      const n = parseInt(text.split(':')[1]);
-      if (!isNaN(n) && n > 0) {
-        state.targetCount = n;
-        saveState();
-        const reply = `✅ Mục tiêu đã được đặt thành ${n} người.`;
-        if (conversationId) await sendMessage(conversationId, reply, true);
-        else if (sender) await sendMessage(sender, reply, false);
-      } else {
-        const reply = '❌ Lệnh !setsonguoi sai định dạng. Ví dụ: !setsonguoi:32';
-        if (conversationId) await sendMessage(conversationId, reply, true);
-        else if (sender) await sendMessage(sender, reply, false);
+    try {
+      if (text === '!menu') {
+        const menuText = [
+          '📜 *Menu lệnh*',
+          '!count -> Bắt đầu đếm người gửi ảnh.',
+          '!setsonguoi:<số> -> Đặt mục tiêu số người.',
+          '!status -> Xem trạng thái bot.'
+        ].join('\n');
+        if (conversationId) await sendMessage(conversationId, menuText, true);
+        else if (sender) await sendMessage(sender, menuText, false);
+        return;
       }
-      return;
-    }
 
-    if (text === '!count') {
-      state.counting = true;
-      state.countedUsers = [];
-      saveState();
-      const reply = `🔔 Đã bật chế độ đếm. Mục tiêu: ${state.targetCount} người.`;
-      if (conversationId) await sendMessage(conversationId, reply, true);
-      else if (sender) await sendMessage(sender, reply, false);
-      return;
-    }
+      if (text.startsWith('!setsonguoi:')) {
+        const n = parseInt(text.split(':')[1]);
+        if (!isNaN(n) && n > 0) {
+          state.targetCount = n;
+          saveState();
+          const reply = `✅ Mục tiêu đã được đặt thành ${n} người.`;
+          if (conversationId) await sendMessage(conversationId, reply, true);
+          else if (sender) await sendMessage(sender, reply, false);
+        } else {
+          const reply = '❌ Lệnh !setsonguoi sai định dạng. Ví dụ: !setsonguoi:32';
+          if (conversationId) await sendMessage(conversationId, reply, true);
+          else if (sender) await sendMessage(sender, reply, false);
+        }
+        return;
+      }
 
-    if (text === '!status') {
-      const statusMsg = `Status: counting=${state.counting}, target=${state.targetCount}, current=${state.countedUsers.length}`;
-      if (conversationId) await sendMessage(conversationId, statusMsg, true);
-      else if (sender) await sendMessage(sender, statusMsg, false);
-      return;
+      if (text === '!count') {
+        state.counting = true;
+        state.countedUsers = [];
+        saveState();
+        const reply = `🔔 Đã bật chế độ đếm. Mục tiêu: ${state.targetCount} người.`;
+        if (conversationId) await sendMessage(conversationId, reply, true);
+        else if (sender) await sendMessage(sender, reply, false);
+        return;
+      }
+
+      if (text === '!status') {
+        const statusMsg = `Status: counting=${state.counting}, target=${state.targetCount}, current=${state.countedUsers.length}`;
+        if (conversationId) await sendMessage(conversationId, statusMsg, true);
+        else if (sender) await sendMessage(sender, statusMsg, false);
+        return;
+      }
+    } catch (e) {
+      console.error('Lỗi khi xử lý lệnh text:', e);
     }
   }
 
@@ -127,18 +139,21 @@ app.post('/webhook', async (req, res) => {
   }
   if (!foundImage && messageObj.image?.url) foundImage = true;
 
-  if (foundImage && sender && !state.countedUsers.includes(sender)) {
-    state.countedUsers.push(sender);
-    saveState();
-    const say = `📸 Ghi nhận: một người mới đã gửi ảnh. Hiện: ${state.countedUsers.length}/${state.targetCount}`;
-    if (conversationId) await sendMessage(conversationId, say, true);
-    else await sendMessage(sender, say, false);
+  if (foundImage && sender) {
+    if (!state.countedUsers.includes(sender)) {
+      state.countedUsers.push(sender);
+      saveState();
+    }
 
-    // Nếu đạt target
-    if (state.countedUsers.length >= state.targetCount) {
+    // Nếu đạt target -> gửi thông báo 1 lần
+    if (state.countedUsers.length >= state.targetCount && state.counting) {
       const notifyText = `🎉 ĐÃ ĐỦ: Mục tiêu ${state.targetCount} người đã hoàn thành! (${state.countedUsers.length}/${state.targetCount})`;
-      if (conversationId) await sendMessage(conversationId, notifyText, true);
-      else await sendMessage(sender, notifyText, false);
+      try {
+        if (conversationId) await sendMessage(conversationId, notifyText, true);
+        else if (sender) await sendMessage(sender, notifyText, false);
+      } catch (e) {
+        console.error('Không gửi thông báo targetCount:', e);
+      }
       state.counting = false;
       saveState();
     }
