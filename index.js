@@ -8,7 +8,7 @@ const axios = require('axios');
 const DATA_FILE = path.join(__dirname, 'botdata.json');
 
 // === CONFIG ===
-const OA_TOKEN = process.env.ZALO_OA_TOKEN || '';
+const OA_TOKEN = process.env.ZALO_OA_TOKEN || '1820869734993300256';
 const TARGET_DEFAULT = 10;
 // =============
 
